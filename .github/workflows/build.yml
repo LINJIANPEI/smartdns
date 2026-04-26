@@ -1,4 +1,4 @@
-name: build-smartdns
+name: smartdns-multi-arch-release
 
 on:
   push:
@@ -6,35 +6,91 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write   # ⭐ 关键：允许创建 release
+  contents: write
 
 jobs:
-  build:
+  build-amd64:
     runs-on: ubuntu-latest
+
     steps:
-      - uses: actions/checkout@v4
-      - run: |
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install deps
+        run: |
           sudo apt-get update
           sudo apt-get install -y build-essential cmake
-      - run: make STATIC=1 -j$(nproc)
-      - run: |
-          mkdir -p release
-          cp src/smartdns release/
-      - uses: actions/upload-artifact@v4
+
+      - name: Build amd64
+        run: |
+          make STATIC=1 -j$(nproc)
+          mkdir -p dist
+          cp src/smartdns dist/smartdns-amd64
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
         with:
-          name: smartdns-linux
-          path: release/smartdns
+          name: amd64
+          path: dist/smartdns-amd64
+
+  build-arm64:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install cross toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
+
+      - name: Build arm64
+        run: |
+          mkdir build && cd build
+          cmake .. \
+            -DCMAKE_SYSTEM_NAME=Linux \
+            -DCMAKE_SYSTEM_PROCESSOR=aarch64 \
+            -DCMAKE_C_COMPILER=aarch64-linux-gnu-gcc \
+            -DCMAKE_CXX_COMPILER=aarch64-linux-gnu-g++
+
+          make -j$(nproc)
+          mkdir -p ../dist
+          cp ../src/smartdns ../dist/smartdns-arm64
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: arm64
+          path: dist/smartdns-arm64
 
   release:
-    needs: build
+    needs: [build-amd64, build-arm64]
     runs-on: ubuntu-latest
+
     steps:
-      - uses: actions/download-artifact@v4
+      - name: Download amd64
+        uses: actions/download-artifact@v4
         with:
-          name: smartdns-linux
-      - uses: softprops/action-gh-release@v2
+          name: amd64
+
+      - name: Download arm64
+        uses: actions/download-artifact@v4
         with:
-          tag_name: build-${{ github.run_number }}
-          files: smartdns
+          name: arm64
+
+      - name: Generate version
+        id: version
+        run: |
+          echo "version=v1.0.0-build.${GITHUB_RUN_NUMBER}" >> $GITHUB_OUTPUT
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.version }}
+          name: SmartDNS ${{ steps.version.outputs.version }}
+          files: |
+            smartdns-amd64
+            smartdns-arm64
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
