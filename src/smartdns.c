@@ -851,15 +851,30 @@ static int _smartdns_create_datadir(void)
 
 static int _set_rlimit(void)
 {
-	struct rlimit value;
-	value.rlim_cur = 40;
-	value.rlim_max = 40;
-	setrlimit(RLIMIT_NICE, &value);
+    struct rlimit value;
+    const rlim_t desired = 1024 * 10;  // 期望的最小值
 
-	value.rlim_cur = 1024 * 10;
-	value.rlim_max = 1024 * 10;
-	setrlimit(RLIMIT_NOFILE, &value);
-	return 0;
+    // nice 限制
+    value.rlim_cur = 40;
+    value.rlim_max = 40;
+    setrlimit(RLIMIT_NICE, &value);
+
+    // NOFILE 限制：不降低，只提高
+    if (getrlimit(RLIMIT_NOFILE, &value) == 0) {
+        if (value.rlim_cur < desired) {
+            value.rlim_cur = desired;
+            // 可选：同时调整硬限制（需要特权）
+            if (value.rlim_max < desired) value.rlim_max = desired;
+            setrlimit(RLIMIT_NOFILE, &value);
+        }
+    } else {
+        // 获取失败，保守设置
+        value.rlim_cur = desired;
+        value.rlim_max = desired;
+        setrlimit(RLIMIT_NOFILE, &value);
+    }
+
+    return 0;
 }
 
 static int _smartdns_init_pre(void)
