@@ -1,4 +1,4 @@
-name: smartdns-android-arm64
+name: smartdns-android-arm64-config-only
 
 on:
   workflow_dispatch:
@@ -12,59 +12,32 @@ jobs:
       NDK: ${{ github.workspace }}/android-ndk
 
     steps:
-      - name: Checkout SmartDNS
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      # =========================
-      # 1. 安装 NDK
-      # =========================
+      # =====================
+      # NDK
+      # =====================
       - name: Setup NDK
         run: |
           wget https://dl.google.com/android/repository/android-ndk-r26d-linux.zip
           unzip android-ndk-r26d-linux.zip
           mv android-ndk-r26d $NDK
 
-      # =========================
-      # 2. 编译 OpenSSL（关键正确方式）
-      # =========================
-      - name: Build OpenSSL
-        run: |
-          git clone --depth=1 https://github.com/openssl/openssl.git
-          cd openssl
-
-          export PATH=$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin:$PATH
-
-          export TARGET=android-arm64
-          export API=$ANDROID_API
-
-          # ⚠️ OpenSSL 正确方式（重点）
-          ./Configure $TARGET \
-            --prefix=$PWD/../openssl-build \
-            --openssldir=$PWD/../openssl-build \
-            no-shared \
-            no-tests \
-            -D__ANDROID_API__=$API \
-            CC=aarch64-linux-android${API}-clang
-
-          make -j$(nproc)
-          make install_sw
-
-      # =========================
-      # 3. 编译 SmartDNS（开启 TLS）
-      # =========================
-      - name: Build SmartDNS
+      # =====================
+      # Build SmartDNS (NO CODE CHANGE)
+      # =====================
+      - name: Build
         run: |
           export TOOLCHAIN=$NDK/toolchains/llvm/prebuilt/linux-x86_64
+          export SYSROOT=$TOOLCHAIN/sysroot
           export PATH=$TOOLCHAIN/bin:$PATH
-
-          export OPENSSL_ROOT=$PWD/openssl-build
 
           make clean || true
 
           make \
             CC=aarch64-linux-android${ANDROID_API}-clang \
-            CFLAGS="-O2 -I$OPENSSL_ROOT/include" \
-            LDFLAGS="-L$OPENSSL_ROOT/lib" \
+            CFLAGS="--sysroot=$SYSROOT" \
+            LDFLAGS="--sysroot=$SYSROOT" \
             WITH_TLS=1 \
             WITH_OPENSSL=1 \
             -j$(nproc)
@@ -72,11 +45,10 @@ jobs:
           mkdir -p dist
           cp src/smartdns dist/smartdns-android-arm64
 
-      # =========================
-      # 4. 上传产物
-      # =========================
-      - name: Upload
-        uses: actions/upload-artifact@v4
+      # =====================
+      # artifact
+      # =====================
+      - uses: actions/upload-artifact@v4
         with:
           name: smartdns-android-arm64
           path: dist/
