@@ -1,4 +1,4 @@
-name: SmartDNS Android arm64 build
+name: SmartDNS Android (Stable NDK)
 
 on:
   workflow_dispatch:
@@ -12,16 +12,20 @@ jobs:
       NDK: ${{ github.workspace }}/android-ndk
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Install NDK
+      # =====================
+      # 1. 用旧 NDK（r21e）
+      # =====================
+      - name: Install NDK r21e
         run: |
-          wget https://dl.google.com/android/repository/android-ndk-r26d-linux.zip
-          unzip android-ndk-r26d-linux.zip
-          mv android-ndk-r26d $NDK
+          wget https://dl.google.com/android/repository/android-ndk-r21e-linux-x86_64.zip
+          unzip android-ndk-r21e-linux-x86_64.zip
+          mv android-ndk-r21e $NDK
 
-      # ========= OpenSSL =========
+      # =====================
+      # 2. OpenSSL（稳定编译）
+      # =====================
       - name: Build OpenSSL
         run: |
           git clone --depth=1 https://github.com/openssl/openssl.git
@@ -30,13 +34,8 @@ jobs:
           export TOOLCHAIN=$NDK/toolchains/llvm/prebuilt/linux-x86_64
           export PATH=$TOOLCHAIN/bin:$PATH
 
-          export CC=aarch64-linux-android-clang
-          export CXX=aarch64-linux-android-clang++
-          export AR=llvm-ar
-          export AS=llvm-as
-          export LD=ld.lld
-          export RANLIB=llvm-ranlib
-          export STRIP=llvm-strip
+          export CC=aarch64-linux-android21-clang
+          export CXX=aarch64-linux-android21-clang++
 
           ./Configure android-arm64 \
             no-shared no-tests \
@@ -45,14 +44,13 @@ jobs:
           make -j$(nproc)
           make install_sw
 
-      # ========= SmartDNS =========
+      # =====================
+      # 3. SmartDNS
+      # =====================
       - name: Build SmartDNS
         run: |
           export TOOLCHAIN=$NDK/toolchains/llvm/prebuilt/linux-x86_64
           export PATH=$TOOLCHAIN/bin:$PATH
-
-          export CC=aarch64-linux-android-clang
-          export CXX=aarch64-linux-android-clang++
 
           make clean || true
 
@@ -62,13 +60,15 @@ jobs:
             OPENSSL_DIR=$PWD/openssl-build \
             -j$(nproc)
 
+      # =====================
+      # 4. 打包
+      # =====================
       - name: Package
         run: |
           mkdir -p dist
           cp src/smartdns dist/smartdns-android-arm64
 
-      - name: Upload
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
-          name: smartdns-android-arm64
+          name: smartdns-arm64
           path: dist/
