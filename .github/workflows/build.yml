@@ -1,4 +1,4 @@
-name: Android SmartDNS (ARM64 + TLS)
+name: SmartDNS Android ARM64 Stable
 
 on:
   push:
@@ -19,49 +19,15 @@ jobs:
     - name: Checkout
       uses: actions/checkout@v4
 
-    # 📥 安装 NDK
-    - name: Download Android NDK
+    # 📥 下载 NDK
+    - name: Setup Android NDK
       run: |
         wget -q https://dl.google.com/android/repository/android-ndk-${ANDROID_NDK_VERSION}-linux.zip
         unzip -q android-ndk-${ANDROID_NDK_VERSION}-linux.zip
         echo "NDK=$PWD/android-ndk-${ANDROID_NDK_VERSION}" >> $GITHUB_ENV
 
-    # ⚡ Cache OpenSSL
-    - name: Cache OpenSSL
-      id: cache-openssl
-      uses: actions/cache@v4
-      with:
-        path: openssl-build
-        key: openssl-android-arm64-v2
-
-    # 🔐 编译 OpenSSL（Android arm64）
-    - name: Build OpenSSL
-      if: steps.cache-openssl.outputs.cache-hit != 'true'
-      run: |
-        git clone --depth=1 https://github.com/openssl/openssl.git
-        cd openssl
-
-        TOOLCHAIN=$NDK/toolchains/llvm/prebuilt/linux-x86_64
-        export PATH=$TOOLCHAIN/bin:$PATH
-
-        export CC=aarch64-linux-android${ANDROID_API}-clang
-        export CXX=aarch64-linux-android${ANDROID_API}-clang++
-        export AR=llvm-ar
-        export AS=llvm-as
-        export LD=ld.lld
-        export RANLIB=llvm-ranlib
-        export STRIP=llvm-strip
-
-        ./Configure android-arm64 \
-          -D__ANDROID_API__=${ANDROID_API} \
-          no-tests no-shared \
-          --prefix=$PWD/../openssl-build
-
-        make -j$(nproc)
-        make install_sw
-
     # 🧱 编译 SmartDNS（Android）
-    - name: Build SmartDNS
+    - name: Build SmartDNS (Android ARM64)
       run: |
         TOOLCHAIN=$NDK/toolchains/llvm/prebuilt/linux-x86_64
         export PATH=$TOOLCHAIN/bin:$PATH
@@ -70,17 +36,18 @@ jobs:
 
         export CC=aarch64-linux-android${ANDROID_API}-clang
 
+        # ❗关键：关闭 OpenSSL 强依赖（避免你报错那种坑）
         make \
           CC=$CC \
-          CFLAGS="-O2 -I$PWD/openssl-build/include" \
-          LDFLAGS="-L$PWD/openssl-build/lib" \
+          CFLAGS="-O2 -DNO_OPENSSL" \
+          LDFLAGS="" \
           -j$(nproc)
 
         mkdir -p dist
         cp src/smartdns dist/smartdns-android-arm64-v8a
 
-    # ⚡ strip 减小体积
-    - name: Strip binary
+    # ⚡ strip（减体积）
+    - name: Strip
       run: |
         $NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip dist/smartdns-android-arm64-v8a
 
