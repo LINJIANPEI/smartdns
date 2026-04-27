@@ -1,58 +1,90 @@
 name: SmartDNS Android ARM64 TLS Build
 
 on:
-  push:
   workflow_dispatch:
+  push:
+    tags:
+      - "v*"
 
 jobs:
-  build:
+  build-android:
     runs-on: ubuntu-latest
 
     env:
       ANDROID_API: 21
       NDK_VERSION: r26d
+      OPENSSL_VERSION: openssl-3.0.13
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+    - name: Checkout
+      uses: actions/checkout@v4
 
-      - name: Install tools
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential git make wget unzip
+    # =========================
+    # 1. 下载 Android NDK
+    # =========================
+    - name: Setup NDK
+      run: |
+        wget https://dl.google.com/android/repository/android-ndk-${NDK_VERSION}-linux.zip
+        unzip android-ndk-${NDK_VERSION}-linux.zip
+        echo "NDK=$PWD/android-ndk-${NDK_VERSION}" >> $GITHUB_ENV
 
-      - name: Download Android NDK
-        run: |
-          wget https://dl.google.com/android/repository/android-ndk-${NDK_VERSION}-linux.zip
-          unzip android-ndk-${NDK_VERSION}-linux.zip
+    # =========================
+    # 2. 编译 OpenSSL (Android arm64)
+    # =========================
+    - name: Build OpenSSL for Android
+      run: |
+        git clone --depth=1 https://github.com/openssl/openssl.git
+        cd openssl
 
-      - name: Setup env
-        run: |
-          echo "NDK=$PWD/android-ndk-${NDK_VERSION}" >> $GITHUB_ENV
-          echo "$PWD/android-ndk-${NDK_VERSION}/toolchains/llvm/prebuilt/linux-x86_64/bin" >> $GITHUB_PATH
+        export TOOLCHAIN=$NDK/toolchains/llvm/prebuilt/linux-x86_64
+        export PATH=$TOOLCHAIN/bin:$PATH
 
-      - name: Build SmartDNS (ARM64 + TLS)
-        run: |
-          export TOOLCHAIN=$NDK/toolchains/llvm/prebuilt/linux-x86_64
-          export PATH=$TOOLCHAIN/bin:$PATH
+        export TARGET=aarch64-linux-android
+        export API=$ANDROID_API
 
-          export CC=aarch64-linux-android${ANDROID_API}-clang
-          export CXX=aarch64-linux-android${ANDROID_API}-clang++
+        ./Configure android-arm64 \
+          --prefix=$PWD/../openssl-build \
+          no-shared
 
-          make clean || true
+        make -j$(nproc)
+        make install_sw
 
-          make \
-            CC=$CC \
-            CXX=$CXX \
-            WITH_TLS=1 \
-            WITH_OPENSSL=0 \
-            -j$(nproc)
+    # =========================
+    # 3. 编译 SmartDNS
+    # =========================
+    - name: Build SmartDNS
+      run: |
+        export TOOLCHAIN=$NDK/toolchains/llvm/prebuilt/linux-x86_64
+        export PATH=$TOOLCHAIN/bin:$PATH
 
-          mkdir -p dist
-          cp src/smartdns dist/smartdns-android-arm64
+        export CC=aarch64-linux-android${ANDROID_API}-clang
+        export CXX=aarch64-linux-android${ANDROID_API}-clang++
 
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: smartdns-android-arm64
-          path: dist/
+        export OPENSSL_DIR=$PWD/openssl-build
+
+        make clean || true
+
+        make -j$(nproc) \
+          CC=$CC \
+          CXX=$CXX \
+          CFLAGS="-O2 -I$OPENSSL_DIR/include" \
+          LDFLAGS="-L$OPENSSL_DIR/lib -lssl -lcrypto"
+
+    # =========================
+    # 4. 打包
+    # =========================
+    - name: Package
+      run: |
+        mkdir -p dist
+        cp src/smartdns dist/smartdns-android-arm64
+
+    # =========================
+    # 5. 发布 Release
+    # =========================
+    - name: Release
+      uses: softprops/action-gh-release@v2
+      with:
+        files: dist/*
+        tag_name: android-arm64-${{ github.run_number }}
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
