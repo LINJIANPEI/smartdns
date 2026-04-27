@@ -1,186 +1,90 @@
-name: smartdns-release
+name: Android Build (SmartDNS + TLS)
 
 on:
   push:
-    branches: [ "main", "master" ]
+    branches: [ master ]
   workflow_dispatch:
 
-permissions:
-  contents: write
-
 jobs:
-
-# =========================
-# VERSION
-# =========================
-  version:
-    runs-on: ubuntu-latest
-    outputs:
-      stable: ${{ steps.v.outputs.stable }}
-      nightly: ${{ steps.v.outputs.nightly }}
-
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - id: v
-        run: |
-          DATE=$(date +%Y%m%d)
-          RUN=${GITHUB_RUN_NUMBER}
-
-          NIGHTLY="nightly-${DATE}-${RUN}"
-
-          LAST=$(git tag --sort=-v:refname | head -n 1)
-          if [ -z "$LAST" ]; then
-            LAST="v1.0.0"
-          fi
-
-          IFS='.' read -r M m p <<< "${LAST#v}"
-          p=$((p+1))
-
-          STABLE="v${M}.${m}.${p}"
-
-          echo "stable=$STABLE" >> $GITHUB_OUTPUT
-          echo "nightly=$NIGHTLY" >> $GITHUB_OUTPUT
-
-# =========================
-# MULTI-ARCH BUILD (FIX ALL ARM ISSUES)
-# =========================
   build:
     runs-on: ubuntu-latest
-    needs: version
+
+    permissions:
+      contents: write
+
+    env:
+      ANDROID_NDK_VERSION: r26d
+      ANDROID_API: 21
 
     steps:
-      - uses: actions/checkout@v4
+    - name: Checkout
+      uses: actions/checkout@v4
 
-      # 🚀 开启 buildx + qemu（关键）
-      - name: Setup Docker Buildx
-        uses: docker/setup-buildx-action@v3
+    # 📥 下载 Android NDK
+    - name: Setup Android NDK
+      run: |
+        wget https://dl.google.com/android/repository/android-ndk-${ANDROID_NDK_VERSION}-linux.zip
+        unzip android-ndk-${ANDROID_NDK_VERSION}-linux.zip
+        echo "NDK=$PWD/android-ndk-${ANDROID_NDK_VERSION}" >> $GITHUB_ENV
 
-      - name: Setup QEMU
-        uses: docker/setup-qemu-action@v3
-        with:
-          platforms: arm64
+    # ⚡ 缓存 OpenSSL（避免重复编译）
+    - name: Cache OpenSSL
+      uses: actions/cache@v4
+      with:
+        path: openssl-build
+        key: openssl-android-arm64-v1
 
-      # =========================
-      # AMD64 build
-      # =========================
-      - name: Build AMD64
-        run: |
-          docker buildx build \
-            --platform linux/amd64 \
-            -f Dockerfile \
-            --output type=local,dest=dist-amd64 \
-            .
+    # 🔐 编译 OpenSSL（仅首次）
+    - name: Build OpenSSL (Android ARM64)
+      if: steps.cache.outputs.cache-hit != 'true'
+      run: |
+        git clone https://github.com/openssl/openssl.git
+        cd openssl
 
-      # =========================
-      # ARM64 build (FIXED)
-      # =========================
-      - name: Build ARM64
-        run: |
-          docker buildx build \
-            --platform linux/arm64 \
-            -f Dockerfile \
-            --output type=local,dest=dist-arm64 \
-            .
+        export ANDROID_NDK=$NDK
+        export PATH=$ANDROID_NDK/toolchains/llvm/prebuilt/linux-x86_64/bin:$PATH
 
-      # =========================
-      # MUSL build
-      # =========================
-      - name: Build MUSL
-        run: |
-          docker buildx build \
-            --platform linux/amd64 \
-            --build-arg MUSL=1 \
-            -f Dockerfile \
-            --output type=local,dest=dist-musl \
-            .
+        ./Configure android-arm64 \
+          -D__ANDROID_API__=${ANDROID_API} \
+          --prefix=$PWD/../openssl-build
 
-      # =========================
-      # Android build (native fallback)
-      # =========================
-      - name: Build Android
-        run: |
-          sudo apt update
-          sudo apt install -y build-essential git wget unzip
+        make -j$(nproc)
+        make install_sw
 
-          wget https://dl.google.com/android/repository/android-ndk-r26d-linux.zip
-          unzip android-ndk-r26d-linux.zip
+    # 🔧 设置编译环境
+    - name: Setup Toolchain
+      run: |
+        echo "$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin" >> $GITHUB_PATH
 
-          export NDK=$PWD/android-ndk-r26d
-          export CC=$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android21-clang
+    # 🧱 编译 SmartDNS（带 TLS）
+    - name: Build SmartDNS (Android ARM64)
+      run: |
+        make clean || true
 
-          make clean || true
-          make CC=$CC -j$(nproc)
+        export CC=aarch64-linux-android${ANDROID_API}-clang
 
-          mkdir -p dist-android
-          cp src/smartdns dist-android/smartdns-android-arm64-v8a
+        make \
+          CC=$CC \
+          CFLAGS="-I$PWD/openssl-build/include" \
+          LDFLAGS="-L$PWD/openssl-build/lib" \
+          -j$(nproc)
 
-      # =========================
-      # UPLOAD
-      # =========================
-      - uses: actions/upload-artifact@v4
-        with:
-          name: amd64
-          path: dist-amd64
+        mkdir -p dist
+        cp src/smartdns dist/smartdns-android-arm64-v8a
 
-      - uses: actions/upload-artifact@v4
-        with:
-          name: arm64
-          path: dist-arm64
+    # 📦 压缩
+    - name: Package
+      run: |
+        cd dist
+        tar -czf smartdns-android-arm64-v8a.tar.gz smartdns-android-arm64-v8a
 
-      - uses: actions/upload-artifact@v4
-        with:
-          name: musl
-          path: dist-musl
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: android
-          path: dist-android
-
-# =========================
-# RELEASE
-# =========================
-  release:
-    needs: [version, build]
-    runs-on: ubuntu-latest
-
-    steps:
-      - uses: actions/download-artifact@v4
-        with: { name: amd64 }
-
-      - uses: actions/download-artifact@v4
-        with: { name: arm64 }
-
-      - uses: actions/download-artifact@v4
-        with: { name: musl }
-
-      - uses: actions/download-artifact@v4
-        with: { name: android }
-
-      # =========================
-      # STABLE RELEASE
-      # =========================
-      - uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ needs.version.outputs.stable }}
-          name: SmartDNS ${{ needs.version.outputs.stable }}
-          files: |
-            smartdns
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      # =========================
-      # NIGHTLY RELEASE
-      # =========================
-      - uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ needs.version.outputs.nightly }}
-          prerelease: true
-          name: SmartDNS Nightly
-          files: |
-            smartdns
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    # 🚀 发布
+    - name: Release
+      uses: softprops/action-gh-release@v2
+      with:
+        tag_name: android-build-${{ github.run_number }}
+        files: |
+          dist/smartdns-android-arm64-v8a
+          dist/smartdns-android-arm64-v8a.tar.gz
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
