@@ -2,23 +2,11 @@
 
 **[English](ReadMe_en.md)**
 
-![SmartDNS](doc/smartdns-banner.png)
-SmartDNS 是一个运行在本地的 DNS 服务器，它接受来自本地客户端的 DNS 查询请求，然后从多个上游 DNS 服务器获取 DNS 查询结果，并将访问速度最快的结果返回给客户端，以此提高网络访问速度。
-SmartDNS 同时支持指定特定域名 IP 地址，并高性匹配，可达到过滤广告的效果; 支持DOT，DOH，DOQ，DOH3，更好的保护隐私。  
 
-与 DNSmasq 的 all-servers 不同，SmartDNS 返回的是访问速度最快的解析结果。
-
-支持树莓派、OpenWrt、华硕路由器原生固件和 Windows 系统等。
 
 ## 使用指导
 
 SmartDNS官网：[https://pymumu.github.io/smartdns](https://pymumu.github.io/smartdns)
-
-## 软件效果展示
-
-### 仪表盘
-
-![SmartDNS-WebUI](doc/smartdns-webui.png)
 
 ### 速度对比
 
@@ -140,21 +128,27 @@ rtt min/avg/max/mdev = 5.954/6.133/6.313/0.195 ms
 
   文档分支为`doc`，安装`mkdocs`工具后，执行`mkdocs build`编译。
 
-## 捐赠
+## 静态编译
 
-如果你觉得此项目对你有帮助，请捐助我们，使项目能持续发展和更加完善。
+```
+# 通过官方脚本安装 Docker
+curl -sSL https://get.docker.com | sh
 
-### PayPal 贝宝
+# 将当前用户添加到 docker 组，运行 sudo 命令
+sudo usermod -aG docker $USER
 
-[![Support via PayPal](https://cdn.rawgit.com/twolfson/paypal-github-button/1.0.0/dist/button.svg)](https://paypal.me/PengNick/)
 
-### AliPay 支付宝
+# 编译
+docker build -f Dockerfile.static --network=host --platform linux/arm64 -t smartdns:static-arm64 .
 
-![alipay](doc/alipay_donate.jpg)
+# 输出smartdns
+docker create --name tmp-smartdns smartdns:static-arm64
+docker cp tmp-smartdns:/usr/sbin/smartdns ./smartdns
+docker rm tmp-smartdns
+file ./smartdns
+```
 
-### WeChat Pay 微信支付
 
-![wechat](doc/wechat_donate.jpg)
 
 ## 开源声明
 
