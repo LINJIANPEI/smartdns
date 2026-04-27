@@ -1,0 +1,35 @@
+FROM ubuntu:22.04 AS smartdns-builder
+
+ARG OPENSSL_VER=3.5.4
+
+RUN apt update && \
+    apt install -y curl make gcc perl wget ca-certificates linux-libc-dev && \
+    update-ca-certificates
+
+# 编译 OpenSSL (静态库)
+RUN mkdir -p /build/openssl && \
+    cd /build/openssl && \
+    curl -sSL https://www.openssl.org/source/openssl-${OPENSSL_VER}.tar.gz | tar xz --strip-components=1 && \
+    ./config --prefix=/opt/build no-shared no-tests && \
+    make -j$(nproc) && \
+    make install_sw
+
+# 编译 SmartDNS
+COPY . /build/smartdns/
+RUN cd /build/smartdns && \
+    rm -fr /build/smartdns/package/*.tar.gz && \
+    export CC=gcc && \
+    export CFLAGS="-I/opt/build/include -static" && \
+    export LDFLAGS="-L/opt/build/lib -static -lm" && \
+    sh ./package/build-pkg.sh --platform linux --arch $(dpkg --print-architecture) --static
+
+# 解压并提取二进制文件到 /release
+RUN cd /build/smartdns/package && \
+    mkdir -p /release && \
+    tar xzf smartdns.*.arm64.tar.gz -C /release --strip-components=1
+
+FROM alpine:3.19
+COPY --from=smartdns-builder /release/usr/sbin/smartdns /usr/sbin/smartdns
+RUN chmod +x /usr/sbin/smartdns
+EXPOSE 53/udp 8080/tcp
+CMD ["/usr/sbin/smartdns", "-f"]
